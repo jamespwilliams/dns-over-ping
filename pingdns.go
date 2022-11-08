@@ -1,10 +1,12 @@
-package doicmp
+package pingdns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 
+	"go.uber.org/zap"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
@@ -23,11 +25,12 @@ const (
 type Server struct {
 	snaplen          int
 	network, address string
+	logger           *zap.Logger
 }
 
-func NewServer() Server {
+func NewServer(logger *zap.Logger) Server {
 	return Server{
-		snaplen: defaultSnaplen, network: defaultNetwork, address: defaultAddress,
+		snaplen: defaultSnaplen, network: defaultNetwork, address: defaultAddress, logger: logger,
 	}
 }
 
@@ -58,9 +61,10 @@ func (s Server) Serve() error {
 			return fmt.Errorf("doicmp: reading packets failed: %w", err)
 		}
 
-		response, err := handleBytes(request[:n])
+		response, err := s.handleBytes(request[:n])
 		if err != nil {
-			return err
+			s.logger.Warn("failed to handle request", zap.Error(err))
+			continue
 		}
 
 		if response == nil {
@@ -68,12 +72,12 @@ func (s Server) Serve() error {
 		}
 
 		if _, err := conn.WriteTo(response, addr); err != nil {
-			fmt.Printf("doicmp: warn: failed to write response: %v\n", err)
+			s.logger.Warn("failed to write response", zap.Error(err))
 		}
 	}
 }
 
-func handleBytes(requestBytes []byte) (response []byte, err error) {
+func (s Server) handleBytes(requestBytes []byte) (response []byte, err error) {
 	parsed, err := icmp.ParseMessage(ipv4.ICMPTypeEcho.Protocol(), requestBytes)
 	if err != nil {
 		return nil, fmt.Errorf("doicmp: parsing message failed: %w", err)
@@ -87,10 +91,10 @@ func handleBytes(requestBytes []byte) (response []byte, err error) {
 
 	icmpEchoRequest, ok := parsed.Body.(*icmp.Echo)
 	if !ok {
-		return nil, fmt.Errorf("packet wasn't icmp echo?")
+		return nil, errors.New("packet wasn't icmp echo?")
 	}
 
-	icmpMessageResponse, err := handleICMPEcho(icmpEchoRequest)
+	icmpMessageResponse, err := s.handleICMPEcho(icmpEchoRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -98,8 +102,8 @@ func handleBytes(requestBytes []byte) (response []byte, err error) {
 	return icmpMessageResponse.Marshal(nil)
 }
 
-func handleICMPEcho(request *icmp.Echo) (response *icmp.Message, err error) {
-	name, err := extractNameFromPayload(request.Data[icmpv4ChecksumLength:])
+func (s Server) handleICMPEcho(request *icmp.Echo) (response *icmp.Message, err error) {
+	name, err := s.extractNameFromPayload(request.Data[icmpv4ChecksumLength:])
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract name from icmp payload: %w", err)
 	}
@@ -132,20 +136,24 @@ func prepareResponseData(ipv4s []net.IP) []byte {
 	return responseData
 }
 
-// this is kind of shit, there's probably a better way
-func extractNameFromPayload(payload []byte) (string, error) {
-	// TODO check if -1
+func (s Server) extractNameFromPayload(payload []byte) (string, error) {
+	s.logger.Debug("extracting request name from payload", zap.String("payload", string(payload)))
+
 	start := findIndex(payload, '?')
 	if start == -1 {
-		return "", nil
+		return "", errors.New("failed to find ? delimiter in icmp echo request data")
 	}
 
 	end := findIndex(payload[start+1:], '?')
 	if end == -1 {
-		return "", nil
+		return "", errors.New("failed to find ? delimiter in icmp echo request data")
 	}
 
-	return string(payload[start+1 : start+1+end]), nil
+	name := string(payload[start+1 : start+1+end])
+
+	s.logger.Debug("got request name from payload", zap.String("name", name))
+
+	return name, nil
 }
 
 func findIndex(bytes []byte, delim byte) int {
