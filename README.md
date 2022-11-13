@@ -40,9 +40,10 @@ Simply read your answer off from the `wrong data` hexdump:
       everything beyond 16 bytes is ignored - and a byte more is required for
       the delimiter (question mark)
 
-* At most 12 IPs can be returned
+* At most 14 IPs can be returned
     * `ping` will always display 56 bytes of hexdumped wrong data, regardless
       of how much is in the response packet
+    * but, in fairness, I'd be surprised if any names resolve to more than 14 IPs
 
 None of these are inherent limitations of ICMP, rather they are limitations of
 the `ping` tool and its output. DNS-over-ICMP could actually be made to work
