@@ -103,6 +103,11 @@ func (s Server) handleBytes(requestBytes []byte) (response []byte, err error) {
 }
 
 func (s Server) handleICMPEcho(request *icmp.Echo) (response *icmp.Message, err error) {
+	if l := len(request.Data); l < icmpv4ChecksumLength {
+		return nil, fmt.Errorf("icmp echo data was too short? got %v bytes, expected at least %v",
+			l, icmpv4ChecksumLength)
+	}
+
 	name, err := s.extractNameFromPayload(request.Data[icmpv4ChecksumLength:])
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract name from icmp payload: %w", err)
